@@ -1,34 +1,35 @@
-import asyncio, json, os, websockets
+import asyncio, os, websockets
 from google import genai
+from aiohttp import web
 
-# 1. تعريف العميل بشكل صريح
-api_key = os.environ.get("GEMINI_API_KEY")
-client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+# إعداد العميل
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"), http_options={'api_version': 'v1alpha'})
 
-async def handle_connection(websocket):
-    print("Connection incoming...")
-    try:
-        # اتصال مباشر بدون تعقيدات
-        async with client.aio.live.connect(model="gemini-2.0-flash-exp") as session:
-            print("Session established!")
-            
-            async def from_mobile():
-                async for message in websocket:
-                    await session.send(input=json.loads(message))
-            
-            async def to_mobile():
-                async for response in session.receive():
-                    await websocket.send(json.dumps({"data": str(response)}))
-            
-            await asyncio.gather(from_mobile(), to_mobile())
-    except Exception as e:
-        print(f"CRITICAL ERROR: {e}")
-        # هذا السطر سيطبع الخطأ الحقيقي في Logs ريندر (هو اللي هيقولنا ليه الـ pipe اتكسر)
+async def gemini_handler(request, ws):
+    print("WebSocket connection established!")
+    async with client.aio.live.connect(model="gemini-2.0-flash-exp") as session:
+        async def send():
+            async for msg in ws:
+                await session.send(input=msg)
+        async def receive():
+            async for resp in session.receive():
+                await ws.send(str(resp))
+        await asyncio.gather(send(), receive())
 
+async def health_check(request):
+    return web.Response(text="OK")
+
+async def init_app():
+    app = web.Application()
+    app.router.add_get('/', health_check) # التعامل مع طلبات ريندر العادية
+    return app
+
+# تشغيل السيرفر باستخدام websockets و aiohttp معاً
 async def main():
     port = int(os.environ.get("PORT", 8080))
-    async with websockets.serve(handle_connection, "0.0.0.0", port):
-        print(f"Server started on port {port}")
+    # هذا الكود سيقبل اتصالات الـ WS، وأي طلب آخر سيتم تجاهله أو الرد عليه بـ OK
+    async with websockets.serve(gemini_handler, "0.0.0.0", port):
+        print(f"Server started on {port}")
         await asyncio.Future()
 
 if __name__ == "__main__":
