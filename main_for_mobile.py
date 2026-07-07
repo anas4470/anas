@@ -1,47 +1,25 @@
-import asyncio
-import json
-import os
 import websockets
-import base64
-from google import genai
+import asyncio
 
-# التأكد من تحميل المفتاح من Render
-api_key = os.environ.get("GEMINI_API_KEY")
-client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
-MODEL = "gemini-2.0-flash-exp"
+async def handler(websocket):
+    # كود الربط مع جمناي الخاص بك هنا
+    async for message in websocket:
+        # معالجة الرسائل
+        pass
 
-async def gemini_session_handler(client_websocket: websockets.WebSocketServerProtocol, path):
-    try:
-        config_message = await client_websocket.recv()
-        config = json.loads(config_message).get("setup", {})
-        config["system_instruction"] = "You are a daily life assistant."
-        
-        async with client.aio.live.connect(model=MODEL, config=config) as session:
-            async def send_to_gemini():
-                async for message in client_websocket:
-                    data = json.loads(message)
-                    if "realtime_input" in data:
-                        for chunk in data["realtime_input"]["media_chunks"]:
-                            await session.send(input=chunk)
+# التعديل الأهم: إضافة فحص للطلبات قبل بدء الـ Handshake
+async def custom_handshake(websocket, path):
+    # هذه الدالة ستسمح فقط بطلبات GET
+    if websocket.request.method != "GET":
+        return False
+    return None
 
-            async def receive_from_gemini():
-                async for response in session.receive():
-                    if response.server_content and response.server_content.model_turn:
-                        for part in response.server_content.model_turn.parts:
-                            if part.text:
-                                await client_websocket.send(json.dumps({"text": part.text}))
-                            elif part.inline_data:
-                                audio_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
-                                await client_websocket.send(json.dumps({"audio": audio_b64}))
-            
-            await asyncio.gather(send_to_gemini(), receive_from_gemini())
-    except Exception as e:
-        print(f"Session Error: {e}")
-
+# عند تشغيل السيرفر
 async def main():
-    port = int(os.environ.get("PORT", 8080))
-    async with websockets.serve(gemini_session_handler, "0.0.0.0", port):
-        await asyncio.Future()
+    async with websockets.serve(
+        handler, "0.0.0.0", 8080, 
+        process_request=custom_handshake # هنا نمرر الفحص
+    ):
+        await asyncio.Future()  # تشغيل السيرفر للأبد
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
